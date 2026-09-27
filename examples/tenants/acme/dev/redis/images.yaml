@@ -1,0 +1,15 @@
+# Everything the mirror must hold before this folder can sync.
+#
+# The same list a platform component carries, for the same reason: a workload
+# delivered by manifestsDir gets no value layers and appears in no chart's values,
+# so its images are in no list anybody mirrors from unless this file exists.
+#
+# Derived from the manifests beside it and checked against them by
+# hack/validate.py, so the two cannot drift -- an images.yaml that has fallen
+# behind its manifests is worse than none, because it reads complete.
+#
+# Note what is NOT here: the operator image. That is pulled by
+# platform/redis-operator and listed there. Two folders pull, so two files list.
+images:
+  - mirror.internal/k8s/redis/redis:v7.0.15
+  - mirror.internal/k8s/redis/redis-sentinel:v7.0.15

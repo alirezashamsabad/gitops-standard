@@ -1,0 +1,49 @@
+{{- include "env-baseline.validate" . }}
+{{- /*
+THE OWNER OF A TENANT NAMESPACE. Exactly one thing creates it, and this is it.
+
+Tenant and shared Applications deliberately do not carry CreateNamespace=true:
+a namespace built here arrives with its budget and its network posture attached,
+and one built by a workload Application arrives bare. Two owners of one object
+that agree on the name and nothing else is worse than none.
+*/ -}}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.namespace }}
+  annotations:
+    # Orders the objects INSIDE this Application: namespace, then quota and
+    # limits, then policy. It does NOT order this Application against a
+    # workload's -- sync waves do not reach across Applications. A workload
+    # whose namespace is not there yet fails and is retried, which is the same
+    # convergence `requires` relies on.
+    argocd.argoproj.io/sync-wave: "-10"
+    # Injected by the ApplicationSet from the folder, so it is right for a
+    # shared scope as well as a tenant one.
+    gitops.internal/source: {{ .Values.sourcePath | default (printf "tenants/%s/%s" .Values.tenant .Values.env) }}/env.yaml
+  labels:
+    {{- include "env-baseline.commonLabels" . | nindent 4 }}
+    # Opt-in for HTTPRoute attachment to a shared Gateway. A Gateway that
+    # selects on this instead of accepting routes from every namespace cannot
+    # be published on by a namespace created outside this chart.
+    gitops.internal/gateway-attach: "true"
+    # THE LABEL VOCABULARY OF A NAMESPACE IS DEFINED HERE AND NOWHERE ELSE.
+    #
+    # Anything that distributes into tenant namespaces -- a secret distributor,
+    # a policy engine -- selects on these. They were briefly written without a
+    # domain, to get past this repository's own address check, and the selectors
+    # in platform/ were not renamed with them. Nothing failed: the gate was
+    # green, the render was correct, and adopting a live namespace would have
+    # replaced its labels with the new set, dropped the one the pull-secret
+    # distributor matches on, and put every running pod into ImagePullBackOff
+    # at its next pull. Synced and Healthy the whole way.
+    #
+    # hack/validate.py now refuses a selector in platform/ naming a
+    # namespace label this template does not emit.
+    #
+    # Opt-in for platform-distributed secrets. Generic on purpose: the machine
+    # must not know which secret.
+    gitops.internal/secrets-distribute: "true"
+    pod-security.kubernetes.io/enforce: {{ .Values.podSecurity.enforce }}
+    pod-security.kubernetes.io/audit: {{ .Values.podSecurity.audit }}
+    pod-security.kubernetes.io/warn: {{ .Values.podSecurity.warn }}

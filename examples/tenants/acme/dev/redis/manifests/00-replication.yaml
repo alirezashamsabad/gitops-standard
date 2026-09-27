@@ -1,0 +1,37 @@
+# The Redis instance. A custom resource the operator in platform/redis-operator
+# reconciles.
+#
+# A CUSTOM RESOURCE WITH NO HEALTH CHECK REPORTS Healthy IN ARGO CD BECAUSE IT
+# EXISTS. Nothing here tells you the operator acted on it, or that the pods came
+# up, or that they can pull their image. The RUNBOOK beside the operator says how
+# to ask.
+apiVersion: redis.redis.opstreelabs.in/v1beta2
+kind: RedisReplication
+metadata:
+  name: redis
+  namespace: acme-dev
+spec:
+  clusterSize: 3
+  kubernetesConfig:
+    image: mirror.internal/k8s/redis/redis:v7.0.15
+    imagePullPolicy: IfNotPresent
+    # Raw manifests get NO value layers. tenants/_shared/values.yaml reaches
+    # charts, not these files, so the pull secret has to be written here -- and
+    # forgetting it is ImagePullBackOff with `no basic auth credentials`.
+    imagePullSecrets:
+      - name: regcred
+    # A REFERENCE, not a credential. The Secret is created outside this folder;
+    # nothing in git holds the password itself.
+    redisSecret:
+      name: redis-auth
+      key: redis-password
+    resources:
+      requests: {cpu: 100m, memory: 256Mi}
+      limits:   {memory: 1Gi}
+  storage:
+    volumeClaimTemplate:
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 8Gi

@@ -1,0 +1,129 @@
+# ---------------------------------------------------------------------------
+# The gate, in CI. Offline: nothing here reaches the public internet, because
+# the runner that matters is inside a customer's estate and cannot.
+#
+# CI_TOOLBOX_IMAGE must be set per project to a mirrored image providing python3
+# with PyYAML, helm and bash. The placeholder below is deliberately not a real
+# reference: an unset variable then fails at image pull with the instruction in
+# the error text, instead of silently falling back to a public registry.
+#
+# THAT ONLY WORKS ON A DOCKER EXECUTOR. A shell executor ignores `image`
+# entirely -- it runs the script on the runner host as the gitlab-runner user --
+# so the placeholder is never pulled, never fails, and protects nothing. On a
+# shell executor the first thing this says is:
+#
+#   FATAL: helm is missing from the CI image.
+#
+# which is the right refusal and the wrong noun: there is no image. On a shell
+# executor, python3 with PyYAML and helm have to be installed on the runner
+# host, and nothing here can check that before the jobs start.
+# ---------------------------------------------------------------------------
+stages: [gate]
+
+variables:
+  # 2, not 1. The shelf job compares against HEAD~1, and a clone of depth 1 has
+  # no parent -- the job would fail on every commit, on the runner it was written
+  # for, while passing here. A gate that always fails is the same lie as one that
+  # never can.
+  GIT_DEPTH: "2"
+  CI_TOOLBOX_IMAGE: "SET-CI_TOOLBOX_IMAGE-IN-GITLAB-CICD-VARIABLES"
+
+default:
+  image: $CI_TOOLBOX_IMAGE
+
+.rules: &rules
+  - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  - if: $CI_COMMIT_BRANCH
+
+validate:
+  stage: gate
+  script: [python3 hack/validate.py]
+  rules: *rules
+
+# The gate that checks the gate. A check matching nothing passes silently and
+# looks like coverage; three were written that way before anyone noticed.
+prove-checks:
+  stage: gate
+  script: [./hack/prove-checks.sh]
+  rules: *rules
+
+pins:
+  stage: gate
+  script: [./hack/check-pins.sh]
+  rules: *rules
+
+render:
+  stage: gate
+  # 1, not the default 0. render.sh leaves remote charts alone because a
+  # workstation cannot usually reach the mirror -- but this runner is inside the
+  # estate that mirror serves, and it is the only place the platform's remote
+  # charts get rendered before Argo CD renders them on main. Without this the job
+  # renders the local charts, says ok, and has looked at none of cert-manager,
+  # vault, vault-transit, external-secrets or redis-operator.
+  #
+  # If the mirror is down this job fails, and that is correct. Do not wrap it in
+  # a reachability test that skips: a gate that steps aside when it cannot run
+  # reports green and has looked at nothing.
+  variables:
+    WITH_REMOTE: "1"
+  script:
+    - |
+      if ! command -v helm >/dev/null 2>&1; then
+        echo "FATAL: helm is missing from the CI image."
+        echo "Mirror one into it rather than skipping this job. A skipped gate is"
+        echo "worse than no gate, because the pipeline still shows green."
+        exit 1
+      fi
+    - ./hack/render.sh
+  rules: *rules
+
+# The shelf test. A commit declares its class in its own message -- `machine:` or
+# nothing -- because only the author knows the intent, and a job that guesses it
+# is a job people learn to ignore.
+#
+# It was `when: manual` with `allow_failure: true`, which is a gate that cannot
+# fail: nobody clicks it, and if they did the pipeline stayed green. Now it runs
+# and it fails.
+shelf:
+  stage: gate
+  script:
+    - |
+      set -eu
+      subject=$(git log -1 --format=%s)
+      files=$(git diff --name-only HEAD~1)
+      echo "$files"
+      # The machine, written once. Both branches below read this one pattern:
+      # the machine branch for what is NOT in it, the product branch for what
+      # IS. Two copies drift, and the drift to expect is a file that is machine
+      # in the standard and unknown to this pattern.
+      machine_pattern='^(charts|hack|bootstrap|docs|examples)/|^(README\.md|\.gitlab-ci\.yml|cluster\.example\.yaml|\.gitignore)$'
+      case "$subject" in
+        Machine:*|machine:*|"Machine merge:"*)
+          # A machine commit may touch only the machine.
+          bad=$(grep -vE "$machine_pattern" <<<"$files" || true) ;;
+        *)
+          # A product commit: one folder, and none of the machine.
+          #
+          # This half only refused the machine's four directories. The root
+          # files went through, so a commit with a product subject could edit
+          # README.md, cluster.example.yaml, .gitignore -- or this gate. Same
+          # mixed class the machine branch refuses, arriving from the other
+          # side, and it was open the whole time that branch was strict.
+          bad=$(grep -E "$machine_pattern" <<<"$files" || true)
+          dirs=$(grep -vE '^cluster\.yaml$|^tenants/_shared/|common-values\.yaml$|env-values\.yaml$' <<<"$files" \
+                 | sed -E 's|^(platform/[^/]+).*|\1|; s|^((tenants\|shared)/[^/]+/[^/]+/[^/]+).*|\1|; s|^((tenants\|shared)/[^/]+/[^/]+)/[^/]+$|\1|' \
+                 | sort -u)
+          # A literal newline inside this string starts a line at column zero
+          # and ends the YAML block scalar. Keep it on one line.
+          [ "$(wc -l <<<"$dirs")" -le 1 ] || bad="$bad | more than one folder: $dirs" ;;
+      esac
+      if [ -n "${bad// /}" ]; then
+        echo
+        echo "The shelf test refuses this commit:"
+        echo "$bad"
+        echo
+        echo "See section 1 of the standard. A machine commit says so in its subject."
+        exit 1
+      fi
+      echo "shelf test: ok"
+  rules: *rules

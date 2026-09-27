@@ -1,0 +1,35 @@
+# Defaults only. cluster.yaml supplies every real value as an extra valueFile.
+#
+# Nothing in this file may name a tool, an app, a customer or an address.
+metadata: {clusterName: "", tier: ""}
+argocd:
+  namespace: argocd
+  repoURL: ""
+  targetRevision: main
+  destinationServer: https://kubernetes.default.svc
+chartRepos: {}
+platformNamespaces: []
+tenants: []
+sharedScopes: []
+
+# syncOptions every generated Application carries.
+#
+# RespectIgnoreDifferences is not optional. Without it ignoreDifferences only
+# affects the diff, and sync still applies the field from git -- so a
+# controller-owned field (an autoscaler's replica count, a rollout's step) is
+# stomped on every sync and the fight this setting exists to end continues.
+defaultSyncOptions:
+  - ServerSideApply=true
+  - PruneLast=true
+  - RespectIgnoreDifferences=true
+  - SkipDryRunOnMissingResource=true
+
+# The four value layers a tenant workload is rendered with, in order. Later
+# files win. Written here because the ApplicationSet has to emit them, and
+# ignoreMissingValueFiles lets a cluster skip any layer it does not use.
+#
+# {t} and {e} are substituted from the folder path at render time.
+tenantValueLayers:
+  - "tenants/_shared/values.yaml"
+  - "tenants/{t}/common-values.yaml"
+  - "tenants/{t}/{e}/env-values.yaml"

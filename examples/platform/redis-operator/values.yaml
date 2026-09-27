@@ -1,0 +1,20 @@
+# The operator only. A Redis INSTANCE is a custom resource in a tenant's
+# environment folder -- see tenants/acme/dev/redis/ -- and must never be here:
+# putting one instance under a component every environment shares gives one
+# environment's data a single owner for all of them.
+
+# CRDs installed by the chart, deliberately. Without them the custom resources in
+# tenants/ fail to apply with `no matches for kind`, which names the symptom and
+# not the missing operator.
+installCRDs: true
+
+replicas: 1
+
+resources:
+  requests: {cpu: 50m, memory: 128Mi}
+  limits:   {memory: 256Mi}
+
+redisOperator:
+  imageName: mirror.internal/k8s/redis/redis-operator
+  imageTag: v0.26.0
+  imagePullPolicy: IfNotPresent

@@ -1,0 +1,118 @@
+{{- if .Values.network.enabled }}
+{{- $n := .Values.network }}
+{{- /*
+The namespace's posture. Nothing here describes one workload: a workload's own
+egress belongs in its folder, and a service's ports belong in a profile.
+
+RENDERED ONLY WHEN network.enabled IS TRUE, and `false` means the namespace has
+NO policy rather than a permissive one. That distinction matters: an empty
+policy set and a default-deny with holes look the same in a diff and behave
+nothing alike.
+*/ -}}
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ .Values.env }}-baseline
+  namespace: {{ .Values.namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-8"
+  labels:
+    {{- include "env-baseline.commonLabels" . | nindent 4 }}
+spec:
+  # Empty selector: every pod in the namespace. Cilium derives the deny from
+  # the rules themselves -- an endpoint selected by a policy carrying ingress
+  # rules is default-deny for ingress, and the same for egress -- so there is no
+  # switch here to set, and there was never one worth reading.
+  endpointSelector: {}
+  ingress:
+    {{- if $n.allowIntraNamespace }}
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: {{ .Values.namespace }}
+    {{- end }}
+    {{- if $n.allowGatewayIngress }}
+    # reserved:ingress is the Envoy the gateway controller runs. It cannot be
+    # expressed as a namespace selector, which is the whole reason namespace
+    # policy lives in this chart and not in a per-service chart's values.
+    - fromEntities: [ingress]
+    {{- end }}
+    {{- if $n.allowHostIngress }}
+    # kubelet probes come from the node, not from a pod. Without this, readiness
+    # fails for every workload and the events say `connection refused` while the
+    # container is listening.
+    - fromEntities: [host, remote-node]
+    {{- end }}
+    {{- range $ns := $n.extraIngressNamespaces }}
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: {{ $ns }}
+    {{- end }}
+    {{- range $name := $n.profiles }}
+    {{- $prof := include "env-baseline.profile" (dict "root" $ "name" $name) | fromYaml }}
+    {{- range $rule := $prof.ingress }}
+    # profile {{ $name }}: {{ $rule.description }}
+    {{- if eq ($rule.from | default "") "sameNamespace" }}
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: {{ $.Values.namespace }}
+      toPorts:
+        - ports: {{ toYaml $rule.ports | nindent 12 }}
+    {{- end }}
+    {{- range $fromNs := $rule.fromNamespaces }}
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: {{ $fromNs }}
+      toPorts:
+        - ports: {{ toYaml $rule.ports | nindent 12 }}
+    {{- end }}
+    {{- end }}
+    {{- end }}
+  egress:
+    {{- if $n.dns.enabled }}
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: {{ $n.dns.namespace }}
+            {{- range $k, $v := $n.dns.selector }}
+            {{ $k }}: {{ $v | quote }}
+            {{- end }}
+      toPorts:
+        - ports: [{port: "53", protocol: UDP}, {port: "53", protocol: TCP}]
+          rules:
+            dns: [{matchPattern: "*"}]
+    {{- end }}
+    {{- if $n.allowIntraNamespace }}
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: {{ .Values.namespace }}
+    {{- end }}
+    {{- if $n.allowKubeAPIServerEgress }}
+    - toEntities: [kube-apiserver]
+    {{- end }}
+    {{- range $cidr := $n.extraEgressCIDRs }}
+    - toCIDR: [{{ $cidr | quote }}]
+    {{- end }}
+    {{- with $n.extraEgressPorts }}
+    - toEntities: [all]
+      toPorts:
+        - ports: {{ toYaml . | nindent 12 }}
+    {{- end }}
+    {{- with $n.extraEgressFQDNs }}
+    - toFQDNs:
+        {{- range . }}
+        - matchName: {{ . | quote }}
+        {{- end }}
+    {{- end }}
+    {{- if $n.allowWorldEgress }}
+    - toEntities: [world]
+    {{- end }}
+    {{- range $name := $n.profiles }}
+    {{- $prof := include "env-baseline.profile" (dict "root" $ "name" $name) | fromYaml }}
+    {{- range $rule := $prof.egress }}
+    # profile {{ $name }}: {{ $rule.description }}
+    - toEntities: [all]
+      toPorts:
+        - ports: {{ toYaml $rule.ports | nindent 12 }}
+    {{- end }}
+    {{- end }}
+{{- end }}

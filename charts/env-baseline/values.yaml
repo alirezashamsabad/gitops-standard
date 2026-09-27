@@ -1,0 +1,58 @@
+# Defaults only. tenants/<t>/<env>/env.yaml is BOTH the generator file for the
+# envs ApplicationSet and the values file for this chart, so every real value
+# arrives from there.
+#
+# Machine file: no address, no customer name, no tool named.
+tenant: ""
+env: ""
+namespace: ""
+# Set by the ApplicationSet from the generator path. Only the annotation uses
+# it, so a hand render without it still works.
+sourcePath: ""
+
+# Pod Security Admission. Written per environment because a namespace that
+# cannot yet run restricted and one that has never been asked to are different
+# situations, and only one of them is a decision.
+podSecurity:
+  enforce: baseline
+  audit: restricted
+  warn: restricted
+
+resourceQuota:
+  enabled: false
+  hard: {}
+
+limitRange:
+  enabled: false
+
+network:
+  # OFF means NO CiliumNetworkPolicy at all -- the namespace is open, not
+  # permissive. Turning it on without a measured dependency list fails as
+  # timeouts with nothing in any log naming the policy that dropped the packet,
+  # so the standard forbids guessing one.
+  enabled: false
+  # No defaultDeny key. Cilium derives it: a CiliumNetworkPolicy that selects an
+  # endpoint and carries ingress rules makes that endpoint default-deny for
+  # ingress, and the same for egress. A separate switch here would be a number
+  # nobody reads.
+  allowIntraNamespace: true
+  allowGatewayIngress: true
+  allowHostIngress: true
+  allowKubeAPIServerEgress: true
+  dns:
+    enabled: true
+    namespace: kube-system
+    selector:
+      k8s-app: kube-dns
+  # DERIVED, NOT DECLARED. Every entry must correspond to a workload in this
+  # environment that names it in `networkProfile:`. hack/validate.py refuses a
+  # mismatch in either direction: the workload folder is the source, this is a
+  # view of it. A hand-kept list here would be the inventory that gates
+  # execution which section 2 of the standard forbids.
+  profiles: []
+  # Facts about THIS customer, which is why they are here and not in a profile.
+  extraIngressNamespaces: []
+  extraEgressCIDRs: []
+  extraEgressFQDNs: []
+  extraEgressPorts: []
+  allowWorldEgress: false

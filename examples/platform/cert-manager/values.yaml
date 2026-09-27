@@ -1,0 +1,23 @@
+# How cert-manager is configured on THIS cluster. The chart's own defaults are
+# not restated here: a value that matches the default is a number nobody reads.
+crds:
+  enabled: true
+  keep: true
+
+# Every image from the mirror. The chart's own image keys, whatever they are
+# called -- read them out of the chart rather than guessing.
+image:
+  repository: mirror.internal/k8s/jetstack/cert-manager-controller
+  tag: v1.18.2
+webhook:
+  image:
+    repository: mirror.internal/k8s/jetstack/cert-manager-webhook
+    tag: v1.18.2
+cainjector:
+  image:
+    repository: mirror.internal/k8s/jetstack/cert-manager-cainjector
+    tag: v1.18.2
+startupapicheck:
+  image:
+    repository: mirror.internal/k8s/jetstack/cert-manager-startupapicheck
+    tag: v1.18.2

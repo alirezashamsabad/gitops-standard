@@ -1,0 +1,96 @@
+# orders @ acme/qa. Everything this service needs, in one file.
+#
+# applicationName is NOT here. The ApplicationSet injects it from the folder name,
+# so the folder and the Helm release cannot drift; the same injection carries the
+# image repository and tag from config.yaml, which is why neither appears below.
+
+deployment:
+  # Two, not one. A PodDisruptionBudget over a single replica protects nothing --
+  # the drain either violates it or takes the only pod down -- and this is the
+  # environment closest to production.
+  replicas: 2
+
+  # READ OFF THE APPLICATION, not guessed from the base image. A framework's
+  # default port is what the image listens on only until the application
+  # overrides it in its own configuration, and the symptom of getting this wrong
+  # is quiet: the Deployment has its replica, the pod runs, Argo CD says Healthy,
+  # and the Service points at nothing.
+  ports:
+    - containerPort: 8080
+      name: http
+      protocol: TCP
+
+  resources:
+    requests: {cpu: 50m,  memory: 192Mi}
+    limits:   {cpu: 500m, memory: 768Mi}
+
+  # ---------------------------------------------------------------------------
+  # PROBES OFF, AND THIS IS A DECISION WITH A STATED COST.
+  #
+  # Turn them on when the application actually serves the endpoint they name. A
+  # startup probe pointed at a path that returns 404 fails its threshold, kubelet
+  # sends SIGTERM, and a well-behaved runtime logs a clean shutdown line -- a
+  # graceful message for a kill, with nothing in the container log naming a probe.
+  #
+  # WHAT IS LOST, because it is not free: with no readiness probe the pod joins
+  # its Service the moment the container starts, before the application is
+  # listening, so a rolling update has a short window of connection refused. And
+  # `Healthy` in Argo CD stops meaning the application works -- it means the
+  # Deployment has available replicas.
+  #
+  # The middle setting, once the port is known but before a health endpoint
+  # exists, is tcpSocket on that port: it proves the process accepts connections
+  # without needing an endpoint.
+  # ---------------------------------------------------------------------------
+  startupProbe:
+    enabled: false
+  readinessProbe:
+    enabled: false
+  livenessProbe:
+    enabled: false
+
+service:
+  enabled: true
+  ports:
+    - port: 8080
+      name: http
+      protocol: TCP
+      targetPort: 8080
+
+# ---------------------------------------------------------------------------
+# HTTPRoute. One switch: `enabled: false` removes the route and changes nothing
+# else about this service.
+#
+# parentRefs points across namespaces at the Gateway named in
+# cluster.yaml:network. Where this repository does not own that object, what it
+# holds is a CLAIM about it, and hack/validate.py checks the claim against
+# cluster.yaml rather than against the cluster.
+#
+# No ReferenceGrant is involved. A Gateway controls who may attach through its own
+# allowedRoutes; ReferenceGrant governs a backendRef that crosses namespaces, and
+# this one does not -- it resolves to the Service above.
+#
+# `rules` is not set. The chart's default sends PathPrefix / to this service on
+# the first port in the `service:` block above, so the route follows that block
+# and the two cannot disagree. Setting `rules` by hand means restating the port,
+# and then there are two places for it to be wrong.
+# ---------------------------------------------------------------------------
+httpRoute:
+  enabled: true
+  hostnames:
+    - qa-orders.apps.internal
+  parentRefs:
+    - name: shared-gateway
+      namespace: default
+
+# Nothing is injected here. When the application reads its configuration from the
+# environment, the values go in tenants/acme/qa/env-values.yaml; when it reads a
+# file, that file becomes a ConfigMap mounted with subPath -- and then something
+# has to restart the pod, because Kubernetes never refreshes a subPath mount.
+externalSecret:
+  enabled: false
+
+networkPolicy:
+  # The namespace owns policy, not a per-service chart. charts/env-baseline emits
+  # it from env.yaml, where network.enabled is currently false.
+  enabled: false

@@ -1,0 +1,20 @@
+# A platform component delivered by a remote chart. The commonest shape.
+namespace: cert-manager
+
+# Folder names under platform/, checked to exist. Nothing orders the syncs --
+# Argo CD retries until the dependency holds -- so this records the fact rather
+# than enforcing a sequence.
+requires: []
+
+chart:
+  repo: certmanager             # -> cluster.yaml:chartRepos
+  name: cert-manager
+  version: "v1.18.2"
+
+# All three written out. The difference between `false` and absent is the
+# difference between a decision and an oversight, and validate.py refuses the
+# absence.
+sync:
+  automated: true
+  selfHeal: true
+  prune: true

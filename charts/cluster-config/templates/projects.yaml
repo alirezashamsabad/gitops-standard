@@ -1,0 +1,166 @@
+{{- /*
+AppProjects. Destinations are DERIVED, never listed by hand.
+
+The previous structure carried this instead:
+
+  {{- range list "argocd" "kube-system" "<one namespace per tool, by hand>" }}
+
+a hand-maintained namespace list inside the machine. Onboarding an ordinary
+tool edited the AppProject; every customer inherited every other customer's
+namespaces; and because the list duplicated the catalog, a check had to be
+written to keep them in step -- a check that compensated for a design fault
+rather than guarding anything.
+
+Two different facts feed this template, and they are not two sources for one
+fact:
+
+  platform namespaces  <- platform/<tool>/component.yaml, aggregated into
+                          cluster.yaml:platformNamespaces, guarded by validate.py
+  tenant namespaces    <- cluster.yaml:tenants[].environments, the only source
+
+Never `namespace: "*"`. A typo in any values file must not be able to create a
+resource in an arbitrary namespace.
+*/ -}}
+{{- $argocdNs := .Values.argocd.namespace -}}
+{{- $server := .Values.argocd.destinationServer -}}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform
+  namespace: {{ $argocdNs }}
+spec:
+  description: Cluster tooling. One entry per platform/<tool>/ that exists.
+  # Every repository an Application in this project may pull from. The chart
+  # mirrors belong here as much as this repo does: validating that chart.repo is
+  # a known KEY does not help if the URL it resolves to is not permitted by the
+  # project. That failure is the same `repository not permitted`, on the other
+  # axis, and it names the project rather than this list.
+  sourceRepos:
+    - {{ .Values.argocd.repoURL | quote }}
+{{- range $url := (values .Values.chartRepos | uniq | sortAlpha) }}
+    - {{ $url | quote }}
+{{- end }}
+  destinations:
+    - server: {{ $server }}
+      namespace: {{ $argocdNs }}
+{{- range .Values.platformNamespaces }}
+    - server: {{ $server }}
+      namespace: {{ . }}
+{{- end }}
+  # Platform legitimately needs cluster-scoped objects. Enumerated, never "*".
+  #
+  # Two halves. These seven are what installing anything needs, on any cluster,
+  # and they belong to the machine. What comes after them is this cluster's
+  # tools -- ClusterIssuer, ClusterSecretStore, whatever the next operator
+  # brings -- and it may not live here: a hand-kept list of one customer's
+  # kinds in the machine is the same defect as the hand-kept list of
+  # destinations that section 1 of the standard was written about. Onboarding a
+  # tool would edit the machine, and every other customer would inherit the
+  # kinds of tools they do not run.
+  #
+  # cluster.yaml declares them and hack/validate.py derives the same list from
+  # the components themselves and refuses a stale one.
+  clusterResourceWhitelist:
+    - {group: "", kind: Namespace}
+    - {group: apiextensions.k8s.io, kind: CustomResourceDefinition}
+    - {group: rbac.authorization.k8s.io, kind: ClusterRole}
+    - {group: rbac.authorization.k8s.io, kind: ClusterRoleBinding}
+    - {group: admissionregistration.k8s.io, kind: ValidatingWebhookConfiguration}
+    - {group: admissionregistration.k8s.io, kind: MutatingWebhookConfiguration}
+    - {group: scheduling.k8s.io, kind: PriorityClass}
+{{- range .Values.platformClusterResources }}
+    - {group: {{ .group | quote }}, kind: {{ .kind }}}
+{{- end }}
+  # Break-glass lives here. Empty in normal operation; a `deny` window with
+  # manualSync: true is COMMITTED during an incident, never applied by hand --
+  # this object is rendered by a chart Argo CD owns, so a live edit is reverted.
+  syncWindows: []
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: envs
+  namespace: {{ $argocdNs }}
+spec:
+  # Separate from the tenant projects on purpose: a Namespace is cluster-scoped,
+  # and a tenant project whitelists no cluster-scoped kind at all. Splitting
+  # them keeps "who may create a namespace" apart from "who may put a workload
+  # in one".
+  #
+  # The reasoning is a comment and not the description because the API caps
+  # spec.description at 255 bytes. Written as a description it was 320, and the
+  # only place that showed was a sync failure on a live cluster: three projects
+  # created, this one refused, and the root Application Degraded with the
+  # ApplicationSets already in place and nothing to run in them.
+  description: Namespaces, quotas and network posture for every environment.
+  sourceRepos:
+    - {{ .Values.argocd.repoURL | quote }}
+  destinations:
+{{- range .Values.tenants }}
+{{- range $env, $ns := .environments }}
+    - server: {{ $server }}
+      namespace: {{ $ns }}
+{{- end }}
+{{- end }}
+{{- range .Values.sharedScopes }}
+{{- range $env, $ns := .environments }}
+    - server: {{ $server }}
+      namespace: {{ $ns }}
+{{- end }}
+{{- end }}
+  # Namespace and nothing else. Enumerated, never "*".
+  clusterResourceWhitelist:
+    - {group: "", kind: Namespace}
+  syncWindows: []
+
+{{- range .Values.tenants }}
+{{- $t := . }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: tenant-{{ $t.name }}
+  namespace: {{ $argocdNs }}
+spec:
+  description: Workloads owned by tenant {{ $t.name }}.
+  sourceRepos:
+    - {{ $.Values.argocd.repoURL | quote }}
+{{- range $url := (values $.Values.chartRepos | uniq | sortAlpha) }}
+    - {{ $url | quote }}
+{{- end }}
+  destinations:
+{{- range $env, $ns := $t.environments }}
+    - server: {{ $server }}
+      namespace: {{ $ns }}
+{{- end }}
+  # A tenant may not create cluster-scoped objects at all.
+  clusterResourceWhitelist: []
+  namespaceResourceBlacklist:
+    - {group: "", kind: ResourceQuota}
+    - {group: "", kind: LimitRange}
+  syncWindows: []
+{{- end }}
+{{- range .Values.sharedScopes }}
+{{- $s := . }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: shared-{{ $s.name }}
+  namespace: {{ $argocdNs }}
+spec:
+  description: Middleware shared by more than one tenant on this cluster.
+  sourceRepos:
+    - {{ $.Values.argocd.repoURL | quote }}
+{{- range $url := (values $.Values.chartRepos | uniq | sortAlpha) }}
+    - {{ $url | quote }}
+{{- end }}
+  destinations:
+{{- range $env, $ns := $s.environments }}
+    - server: {{ $server }}
+      namespace: {{ $ns }}
+{{- end }}
+  clusterResourceWhitelist: []
+  syncWindows: []
+{{- end }}

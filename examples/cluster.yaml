@@ -1,0 +1,59 @@
+# A filled-in cluster.yaml, for one imaginary cluster.
+#
+# Every value here is product: it describes this cluster and nothing else, and it
+# never travels back to the standard. cluster.example.yaml beside this tree is the
+# same file with SET- placeholders instead of answers.
+metadata:
+  clusterName: acme-nonprod
+  client: acme                  # names the internal CA that platform/pki issues from
+  tier: nonprod
+
+argocd:
+  namespace: argocd
+  repoURL: https://git.internal/acme/gitops-config-nonprod.git
+  targetRevision: main
+  destinationServer: https://kubernetes.default.svc
+
+# Every image must start with one of these. An air-gapped cluster has exactly
+# one: its own mirror.
+allowedImageRegistries:
+  - mirror.internal
+
+# Chart sources keyed by PURPOSE, not by which mirror holds them. A component
+# names the KEY; moving a mirror is then one line here. Several keys pointing at
+# one URL is normal and is the point.
+chartRepos:
+  certmanager: https://charts.internal/repository/helm/
+  apps: https://charts.internal/repository/helm/
+  data: https://charts.internal/repository/helm/
+
+# AGGREGATION, NOT SOURCE. hack/validate.py derives this from platform/*/ and
+# refuses it the moment it disagrees, so it is a claim that gets checked rather
+# than a list to maintain.
+# Empty here, because neither example component creates a cluster-scoped object
+# beyond the ones the machine grants every platform Application. Adding
+# platform/pki -- which issues from a ClusterIssuer -- is what puts a line here,
+# and validate.py warns about an entry nothing creates because a stale one widens
+# the AppProject for nothing.
+platformClusterResources: []
+
+platformNamespaces:
+  - cert-manager
+  - redis-operator
+
+tenants:
+  - name: acme
+    description: The example tenant.
+    environments:
+      dev: acme-dev
+      qa: acme-qa
+sharedScopes: []
+
+network:
+  # Whether this repository owns the Gateway is decided by whether
+  # platform/gateway/ exists. Where it does not, these lines are a claim about an
+  # object installed elsewhere, and validate.py checks HTTPRoutes against them.
+  gatewayClass: cilium
+  gatewayName: shared-gateway
+  gatewayNamespace: default
+  baseDomain: apps.internal

@@ -1,0 +1,33 @@
+# Argo CD install values. Copy to the cluster repo, fill in, keep it there.
+#
+# NOT applied by Argo CD. This is Plane 0: a human runs helm with it, once, and
+# again for an upgrade. Test 1 of the standard says why -- an Application that
+# manages the thing that applies Applications cannot recover from a bad value.
+#
+# The placeholders are deliberately invalid so an unfilled one fails at install
+# with a message naming this file.
+global:
+  image:
+    # The mirror this cluster pulls from. Every image, no exception.
+    repository: SET-mirror/argoproj/argocd
+    tag: SET-argocd-version
+
+configs:
+  params:
+    # Applications live only in the Argo CD namespace. Widening this is how an
+    # Application in a tenant namespace becomes able to name any project.
+    application.namespaces: ""
+    # Progressive syncs stay OFF. The standard does not use RollingSync: it
+    # forces autosync off on every generated Application, and selfHeal with it.
+    applicationsetcontroller.enable.progressive.syncs: "false"
+  cm:
+    # How long until a change in git is noticed WITHOUT a webhook. Write the
+    # number you chose into docs/30-incident.md -- during an incident it is the
+    # difference between using this tool and going around it.
+    timeout.reconciliation: 180s
+
+server:
+  # No ingress here. The Gateway this cluster uses is described in
+  # cluster.yaml:network and is Plane 1 or a platform component, not this.
+  ingress:
+    enabled: false

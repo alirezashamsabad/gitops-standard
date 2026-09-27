@@ -1,0 +1,41 @@
+# The one Application a human applies. Everything else is generated from it.
+#
+# Rendered by bootstrap/render-root.sh from cluster.yaml, because every value in
+# it is a fact about one cluster and this directory may not contain an address.
+#
+# ARGO CD DOES NOT MANAGE ITSELF HERE, and that is not a style preference. A
+# self-managing Argo CD that syncs a broken value for its own Deployment takes
+# away the thing that would have fixed it. Upgrading Argo CD is a human running
+# helm, from bootstrap/, on purpose.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cluster-config
+  namespace: __ARGOCD_NAMESPACE__
+  # Without this, deleting the root Application orphans every AppProject and
+  # ApplicationSet it created, and the next bootstrap collides with them.
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: __REPO_URL__
+    targetRevision: __TARGET_REVISION__
+    path: charts/cluster-config
+    helm:
+      valueFiles:
+        - ../../cluster.yaml
+  destination:
+    server: __DESTINATION_SERVER__
+    namespace: __ARGOCD_NAMESPACE__
+  syncPolicy:
+    automated:
+      selfHeal: true
+      # FALSE. This Application owns the AppProjects. A prune here removes the
+      # projects out from under every other Application on the cluster, and each
+      # of them then reports `project not found` -- which names neither this
+      # Application nor the moment it happened.
+      prune: false
+    syncOptions:
+      - ServerSideApply=true
+      - RespectIgnoreDifferences=true

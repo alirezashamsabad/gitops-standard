@@ -1,0 +1,20 @@
+# redis @ acme/dev. A workload delivered by RAW MANIFESTS rather than a chart --
+# the second of the three shapes a folder can take, and the reason `manifestsDir`
+# exists. A custom resource is not a Helm release and wrapping one in a chart to
+# satisfy the structure would be the structure winning an argument it should lose.
+namespace: acme-dev
+
+manifestsDir: examples/tenants/acme/dev/redis/manifests
+
+# STATEFUL. No `image:` block, because the images are inside the manifests; and
+# nothing here is promoted by a pipeline, because a database version is not a
+# build number.
+stateful: true
+
+sync:
+  automated: true
+  selfHeal: true
+  # FALSE, AND NOT NEGOTIABLE. Pruning a stateful service's resources is how its
+  # PersistentVolumeClaims get deleted, and `git revert` does not bring data back.
+  # validate.py refuses `stateful: true` with `prune: true`.
+  prune: false

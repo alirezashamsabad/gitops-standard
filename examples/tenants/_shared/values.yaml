@@ -1,0 +1,36 @@
+# VALUE LAYER 1 of four: every tenant, every environment on this cluster.
+#
+# The four layers, later winning:
+#
+#   tenants/_shared/values.yaml              this file
+#   tenants/<t>/common-values.yaml           one tenant
+#   tenants/<t>/<e>/env-values.yaml          one environment
+#   tenants/<t>/<e>/<svc>/values.yaml        one workload
+#
+# All four are mounted with ignoreMissingValueFiles, so a layer this cluster does
+# not need simply is not there. None of them is created by default.
+#
+# WHAT BELONGS IN THIS LAYER is not "what two services happen to agree on". It is
+# what is true OF THE LAYER. A pull secret is a fact about where this estate keeps
+# its images, and it is true with one service in the estate; a replica count is an
+# agreement between services and belongs further down.
+#
+# Leaving this file out because there is only one service is how Deployments ship
+# with no imagePullSecrets, pulling anonymously from a private mirror, which
+# containerd reports as `no basic auth credentials` -- a message that names
+# neither the workload nor the secret.
+deployment:
+  imagePullSecrets:
+    - name: regcred
+
+# WHAT IS NOT HERE, and each absence is a decision with a cost rather than an
+# oversight:
+#
+#   replicas: 2        doubles what every service costs; needs a capacity decision
+#   pdb.enabled        a PodDisruptionBudget over one replica protects nothing
+#   probes             no probe can be shared until every application implements
+#                      the same endpoint; a startup probe pointed at a 404 kills
+#                      every pod, and the container log says
+#                      "Application is shutting down..." -- a graceful message
+#                      for a kill, naming no probe
+#   priorityClassName  names a PriorityClass the cluster may not have

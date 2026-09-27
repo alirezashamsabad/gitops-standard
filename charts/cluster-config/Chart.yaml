@@ -1,0 +1,5 @@
+apiVersion: v2
+name: cluster-config
+description: The machine. AppProjects and ApplicationSets, with no tool named in them.
+type: application
+version: 0.1.0

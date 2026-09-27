@@ -1,0 +1,24 @@
+# orders @ acme/dev. A promotable unit: chart version, image tag, sync policy.
+#
+# The folder name is the service name. Nothing inside restates it, so the two
+# cannot drift, and the Application this generates is acme-dev-orders.
+namespace: acme-dev
+
+chart:
+  repo: apps                    # -> cluster.yaml:chartRepos
+  name: application
+  version: "9.0.0"
+
+image:
+  repository: mirror.internal/acme/orders
+  # WRITTEN BY CI. The deploy job of this service's pipeline replaces this one
+  # line and touches nothing else in this file. It is the only line in the whole
+  # repository a pipeline edits.
+  tag: v1.2.3
+
+sync:
+  automated: true
+  selfHeal: true
+  # true here and false on the environment closest to production. A stateless
+  # application's removed Deployment should go; nothing in this folder owns data.
+  prune: true

@@ -1,0 +1,14 @@
+# A second component, to show that `requires` is a fact and not an ordering.
+namespace: redis-operator
+
+requires: []
+
+chart:
+  repo: data
+  name: redis-operator
+  version: "0.26.1"
+
+sync:
+  automated: true
+  selfHeal: true
+  prune: true

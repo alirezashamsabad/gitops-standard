@@ -1,0 +1,76 @@
+# The four gates, plus the commit-class test.
+#
+# This mirrors .gitlab-ci.yml, which is the file to copy into a cluster
+# repository inside an air-gapped estate: there, nothing may reach the public
+# internet and the tools come from a mirrored image. Here they are installed
+# from the internet, because this repository is public and there is no mirror.
+#
+# Keep both. The design is not tied to either forge, and a cluster repository
+# usually lives on a different one from this.
+name: gates
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      # 2, not 1. The commit-class job below compares against HEAD~1, and a
+      # shallow clone of depth 1 has no parent -- the job then fails on every
+      # commit. A gate that always fails is the same lie as one that never can.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install pyyaml
+
+      - uses: azure/setup-helm@v4
+
+      - name: validate
+        run: python3 hack/validate.py
+
+      # The gate that checks the gates. A check that matches nothing passes
+      # silently and is indistinguishable from coverage, so every check has a
+      # case that breaks its rule on purpose and expects the refusal.
+      - name: prove-checks
+        run: ./hack/prove-checks.sh
+
+      - name: pins
+        run: ./hack/check-pins.sh
+
+      # WITH_REMOTE is not set. render.sh leaves remote charts alone unless it
+      # is, because fetching them needs a reachable chart repository; a runner
+      # inside the estate a mirror serves should set it, and this one has no
+      # mirror to fetch from.
+      #
+      # Do not wrap a gate in a reachability test that skips on failure. A gate
+      # that steps aside when it cannot run reports green and has looked at
+      # nothing.
+      - name: render
+        run: ./hack/render.sh
+
+      # The worked example under examples/ is a real cluster repository, and this
+      # builds one out of it and runs the gates on that. It is the only place the
+      # checks that need a cluster.yaml with tenants in it can fire at all --
+      # the standard has none, so those checks are structurally silent here.
+      - name: examples
+        run: ./hack/check-examples.sh
+
+# NO COMMIT-CLASS JOB HERE, and that is not an omission.
+#
+# .gitlab-ci.yml has one: it refuses a commit whose subject says `Machine:` while
+# it edits product files, or the reverse. That test exists to police a CLUSTER
+# repository, which holds both classes side by side.
+#
+# This repository holds only the machine. It has no cluster.yaml, no platform/
+# and no tenants/, so every commit here is a machine commit by definition and
+# there is nothing for the test to separate. The gates above still check that the
+# test itself is coherent -- that its file parses, that its pattern is assigned
+# once and matches the machine exactly, and that it reads that pattern in both
+# directions -- because the version a cluster repository inherits is this one.

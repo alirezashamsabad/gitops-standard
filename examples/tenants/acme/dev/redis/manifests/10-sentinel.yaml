@@ -1,0 +1,33 @@
+# Sentinel in front of the replication, so applications address Sentinel from day
+# one and gaining real high availability later changes nothing on their side.
+#
+# quorum 2 of 3: two sentinels must agree the master is gone before one is
+# promoted. With quorum 1 a single sentinel that loses the network promotes a
+# replica and there are two masters.
+apiVersion: redis.redis.opstreelabs.in/v1beta2
+kind: RedisSentinel
+metadata:
+  name: redis-sentinel
+  namespace: acme-dev
+spec:
+  clusterSize: 3
+  kubernetesConfig:
+    image: mirror.internal/k8s/redis/redis-sentinel:v7.0.15
+    imagePullPolicy: IfNotPresent
+    imagePullSecrets:
+      - name: regcred
+    resources:
+      requests: {cpu: 50m, memory: 128Mi}
+      limits:   {memory: 256Mi}
+  redisSentinelConfig:
+    redisReplicationName: redis
+    # PER ENVIRONMENT. Each environment's sentinels must agree on a name that no
+    # other environment uses, and an application connecting through Sentinel has
+    # to be told the same name. A shared value here points one environment's
+    # clients at another's master.
+    masterGroupName: acme-dev
+    quorum: "2"
+    redisReplicationPassword:
+      secretKeyRef:
+        name: redis-auth
+        key: redis-password

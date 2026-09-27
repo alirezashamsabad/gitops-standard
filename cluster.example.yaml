@@ -1,0 +1,69 @@
+# ---------------------------------------------------------------------------
+# The truth about ONE cluster. Copy this to cluster.yaml in a cluster repo and
+# fill it in. Nothing here is machinery; every value is product.
+#
+# The placeholders are deliberately invalid. An unset value must fail at render
+# with a message naming this file, not resolve to something plausible.
+# ---------------------------------------------------------------------------
+metadata:
+  clusterName: SET-clusterName
+  tier: SET-tier                # nonprod | prod
+
+argocd:
+  namespace: argocd
+  repoURL: SET-repoURL          # the git URL of THIS cluster's repo
+  targetRevision: main
+  destinationServer: https://kubernetes.default.svc
+
+# Every image must start with one of these. No exceptions, no public registry.
+allowedImageRegistries: []
+
+# Helm chart sources, keyed by PURPOSE rather than by which mirror holds them.
+# A component names the KEY; the machine bakes the lookup, so a mirror move is
+# one line here.
+chartRepos: {}
+
+# ---------------------------------------------------------------------------
+# AGGREGATION, NOT SOURCE.
+#
+# The namespace of a platform tool is declared in platform/<tool>/component.yaml.
+# This list repeats them only because Helm cannot read files outside its own
+# chart directory, and the AppProject has to enumerate its destinations at
+# render time -- an AppProject with `namespace: "*"` would let a typo in any
+# values file create a resource anywhere on the cluster.
+#
+# hack/validate.py derives the correct list from platform/*/component.yaml and
+# REFUSES if this disagrees. The folder is the source; this is a derived view
+# with a guard. That is the difference from a hand-maintained inventory: here,
+# nothing runs because it appears in this list.
+# ---------------------------------------------------------------------------
+# Cluster-scoped kinds this cluster's platform tools create, beyond the seven
+# every platform needs. AGGREGATION, NOT SOURCE: hack/validate.py derives the
+# same list from platform/*/ and refuses this one when it is stale.
+#
+# A tool whose kind is missing here syncs everything else and fails on that one
+# object with `resource <group>:<kind> is not permitted in project platform` --
+# which names the kind and the project and not the tool.
+platformClusterResources: []
+#  - {group: cert-manager.io, kind: ClusterIssuer}
+
+platformNamespaces: []
+
+# Tenant namespaces are NOT repeated anywhere. They are derived from here.
+tenants: []
+# - name: SET-tenant
+#   environments:
+#     dev: SET-namespace
+
+# Shared middleware scopes, when two tenants on THIS cluster consume one
+# instance. Empty until there is a second tenant.
+sharedScopes: []
+
+network:
+  # The Gateway this cluster's HTTPRoutes attach to. Two cases of one rule:
+  # if platform/gateway/ exists this repo owns the object; if not, these lines
+  # are a claim about something installed elsewhere and preflight checks it.
+  gatewayClass: ""
+  gatewayName: ""
+  gatewayNamespace: ""
+  baseDomain: ""

@@ -1,0 +1,5 @@
+apiVersion: v2
+name: env-baseline
+description: The namespace an environment lives in, its budget, and its network posture.
+type: application
+version: 0.1.0

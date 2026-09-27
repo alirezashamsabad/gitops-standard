@@ -1,0 +1,15 @@
+{{- if .Values.resourceQuota.enabled }}
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: {{ .Values.env }}-quota
+  namespace: {{ .Values.namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-9"
+  labels:
+    {{- include "env-baseline.commonLabels" . | nindent 4 }}
+spec:
+  hard:
+    {{- toYaml .Values.resourceQuota.hard | nindent 4 }}
+{{- end }}

@@ -1,0 +1,333 @@
+{{- /*
+ApplicationSets. Five, and none of them names a tool, an app or a customer:
+platform, tenants, shared, and one for each of the two scopes' environments.
+
+Discovery is by folder: a thing exists on this cluster because its folder
+exists. There is no selection file, therefore no list of `enabled: false`, and
+therefore no second place to forget.
+
+NO RollingSync, AND THEREFORE NO `wave`. Ordering Applications relative to one
+another is only available through Progressive Syncs, and the operator manual is
+explicit that "RollingSync will force all generated Applications to have
+autosync disabled" -- which takes selfHeal with it, because selfHeal lives
+inside `automated`. Section 4 of the standard makes selfHeal the ownership rule
+and refuses to turn it off permanently. Ordering and continuous reconciliation
+are not both available here, and the standard ranks reconciliation first.
+
+What replaces ordering: `requires` is checked for existence at push time, and
+Argo CD retries. A component whose CRD is not yet present fails, is retried,
+and converges. Bring-up therefore takes more than one reconcile, visibly
+(Degraded, then Healthy) rather than silently. That is the cost, and it is
+smaller than losing drift correction on every platform component forever.
+
+EVERY optional key is read through hasKey. goTemplateOptions has
+missingkey=error, under which a bare `{{ if .chart }}` on a file that has no
+`chart` key is not false -- it is `map has no entry for key "chart"`, and
+generation stops. A component using manifestsDir, and every tenant config.yaml,
+would hit it.
+*/ -}}
+{{- $argocdNs := .Values.argocd.namespace -}}
+{{- $repo := .Values.argocd.repoURL -}}
+{{- $rev := .Values.argocd.targetRevision -}}
+{{- $server := .Values.argocd.destinationServer -}}
+{{- $opts := .Values.defaultSyncOptions -}}
+{{- $repos := .Values.chartRepos -}}
+{{- $layers := .Values.tenantValueLayers -}}
+
+{{- define "cc.protections" -}}
+# BREAK-GLASS. Without this, disabling auto-sync on one Application during an
+# incident is undone by this controller within seconds, because applicationsSync
+# below permits updates. The operator manual names this field for exactly that.
+ignoreApplicationDifferences:
+  - jsonPointers:
+      - /spec/syncPolicy
+syncPolicy:
+  # create-update: may create and update an Application, never delete one.
+  applicationsSync: create-update
+  # A deleted Application must not cascade to its children. A folder removed by
+  # a bad rebase would otherwise take a PersistentVolumeClaim with it, and
+  # `git revert` does not bring data back.
+  preserveResourcesOnDeletion: true
+{{- end -}}
+
+{{- /* The source block. `sources:` for a chart, because $values resolves only
+       against a second source carrying `ref: values`; `source:` otherwise. */ -}}
+{{- define "cc.sourcePatch" }}
+{{- $repo := .repo }}
+{{- $rev := .rev }}
+{{- $repos := .repos }}
+{{- $layers := .layers }}
+{{- $opts := .opts }}
+  {{ "{{- if hasKey . \"chart\" }}" }}
+  sources:
+{{- range $k, $v := $repos }}
+    {{ printf "{{- if eq .chart.repo %s }}" ($k | quote) }}
+    - repoURL: {{ $v | quote }}
+      chart: {{ "{{ .chart.name }}" }}
+      targetRevision: {{ "{{ .chart.version }}" }}
+      helm:
+        # Injected from the folder and from config.yaml, because a values file is
+        # not templated and cannot know either. applicationName comes from the
+        # folder name so nothing restates it; the image comes from config.yaml so
+        # CI edits one line there and nothing else.
+        #
+        # ALL THREE are inside the image guard, and applicationName was not.
+        # These are injections into the generic application chart and into
+        # nothing else. Sent to a third-party chart they are unknown keys, and
+        # whether that is silent depends on something the machine cannot see:
+        # cert-manager ships a values.schema.json and refused with `additional
+        # properties 'applicationName' not allowed`, while external-secrets and
+        # redis-operator have no schema and ignored it. One Application at
+        # Unknown, two green, same wrong parameter in all three.
+        #
+        # A component declaring an image is the signal, because the generic app
+        # chart is the only chart here that takes one from config.yaml. If a
+        # component ever uses that chart without an image, this stops being
+        # true and cluster.yaml will have to say which chartRepos key is the
+        # application chart -- the machine may not name it.
+        parameters:
+          {{ "{{- if hasKey . \"image\" }}" }}
+          - name: applicationName
+            value: '{{ "{{ .path.basename }}" }}'
+          - name: deployment.image.repository
+            value: '{{ "{{ .image.repository }}" }}'
+          - name: deployment.image.tag
+            value: '{{ "{{ .image.tag }}" }}'
+          {{ "{{- end }}" }}
+        # A layer this cluster does not use is simply absent, not an error.
+        ignoreMissingValueFiles: true
+        valueFiles:
+{{- range $layers }}
+          - $values/{{ . | replace "{t}" "{{ index .path.segments 1 }}" | replace "{e}" "{{ index .path.segments 2 }}" }}
+{{- end }}
+          - $values/{{ "{{ .path.path }}" }}/values.yaml
+    {{ "{{- end }}" }}
+{{- end }}
+    {{ printf "{{- if and %s }}" (include "cc.unknownRepoGuard" $repos) }}
+    # chart.repo resolved to no entry in cluster.yaml:chartRepos. hack/validate.py
+    # refuses this before it can be pushed; if it reaches a cluster, fail loudly
+    # here rather than silently building an Application with only a values ref.
+    - repoURL: "UNRESOLVED-chart.repo-SEE-cluster.yaml-chartRepos"
+      chart: {{ "{{ .chart.name }}" }}
+      targetRevision: {{ "{{ .chart.version }}" }}
+    {{ "{{- end }}" }}
+    # The second source exists only so `$values` above resolves. Without a
+    # source carrying `ref: values`, the valueFiles path is not found and the
+    # chart renders with its own defaults - which looks like it worked.
+    - repoURL: {{ $repo | quote }}
+      targetRevision: {{ $rev | quote }}
+      ref: values
+  {{ "{{- else if hasKey . \"localChart\" }}" }}
+  # A chart in this repository still needs values, and it is easy to give it none.
+  #
+  # Without this, Argo renders it with `helm template .` and nothing else, so the
+  # chart sees only its own defaults: a chart that requires a value refuses to
+  # render, platform/platform-config the same, and both Applications sat at
+  # Unknown with Healthy beside it -- Healthy meaning nothing was compared.
+  #
+  # Two files, in this order. cluster.yaml carries the facts a component cannot
+  # know about the cluster it is on; the component's own values.yaml overrides
+  # them where it needs to. Addressed through $values rather than `../../..`,
+  # because the depth of a localChart path is a convention and this is not the
+  # place to depend on it.
+  sources:
+    - repoURL: {{ $repo | quote }}
+      targetRevision: {{ $rev | quote }}
+      path: {{ "{{ .localChart }}" }}
+      helm:
+        ignoreMissingValueFiles: true
+        valueFiles:
+          - $values/cluster.yaml
+          - {{ "$values/{{ .path.path }}/values.yaml" }}
+    - repoURL: {{ $repo | quote }}
+      targetRevision: {{ $rev | quote }}
+      ref: values
+  {{ "{{- else }}" }}
+  # manifestsDir, or the folder itself: raw manifests, and nothing to template.
+  source:
+    repoURL: {{ $repo | quote }}
+    targetRevision: {{ $rev | quote }}
+    path: {{ "{{ if hasKey . \"manifestsDir\" }}{{ .manifestsDir }}{{ else }}{{ .path.path }}{{ end }}" }}
+  {{ "{{- end }}" }}
+  syncPolicy:
+  {{ "{{- if and (hasKey . \"sync\") (hasKey .sync \"automated\") .sync.automated }}" }}
+    automated:
+      selfHeal: {{ "{{ .sync.selfHeal }}" }}
+      prune: {{ "{{ .sync.prune }}" }}
+  {{ "{{- end }}" }}
+    # Emitted here and nowhere else. If the base template carried these too, a
+    # patch that adds one option would replace the whole list -- scalar lists are
+    # not merged. One place, and CreateNamespace joins it.
+    syncOptions:
+{{- range .opts }}
+      - {{ . }}
+{{- end }}
+{{- if .createNamespace }}
+      # Argo CD creates the namespace named in destination.
+      #
+      # Decided by SCOPE, not per component, so there is no key to forget and no
+      # bare test to break under missingkey=error. A platform tool's namespace is
+      # its own, and creating one that already exists is a no-op -- which is why
+      # a component that deliberately shares another's namespace needs nothing
+      # here either.
+      #
+      # Tenant and shared Applications never get it: those namespaces are owned
+      # by charts/env-baseline, which builds them from env.yaml with the quota
+      # and the network posture attached. An Application creating its own would
+      # be a second owner of the same object.
+      - CreateNamespace=true
+{{- end }}
+{{- end -}}
+
+{{- define "cc.unknownRepoGuard" -}}
+{{- $parts := list -}}
+{{- range $k, $v := . -}}
+{{- $parts = append $parts (printf "(ne .chart.repo %s)" ($k | quote)) -}}
+{{- end -}}
+{{- if $parts }}{{ join " " $parts }}{{ else }}true{{ end -}}
+{{- end -}}
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: platform
+  namespace: {{ $argocdNs }}
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+{{ include "cc.protections" . | indent 2 }}
+  generators:
+    - git:
+        repoURL: {{ $repo | quote }}
+        revision: {{ $rev | quote }}
+        files:
+          - path: "platform/*/component.yaml"
+  template:
+    metadata:
+      # The folder name IS the name. Nothing restates it inside the file, so the
+      # two cannot drift.
+      name: '{{ "{{ .path.basename }}" }}'
+      finalizers: []
+    spec:
+      project: platform
+      destination:
+        server: {{ $server | quote }}
+        namespace: '{{ "{{ .namespace }}" }}'
+  # indent 4, not 2. The block scalar's base indentation is set by `spec:`
+  # above, which is four. cc.sourcePatch emits its keys at two, so `indent 2`
+  # landed them at four as well -- level with `spec:` rather than under it.
+  # After the block strips four, the patch reads: spec is null, and there are
+  # root-level sources and syncPolicy. As a merge patch that says DELETE spec,
+  # so every Application generated from it was rejected for having none.
+  #
+  # The three ApplicationSets carrying a patch produced nothing on a live
+  # cluster and the two without one worked, which is the only reason anyone
+  # looked. Nothing here rendered it wrong -- the YAML was valid the whole way.
+  templatePatch: |
+    spec:
+{{ include "cc.sourcePatch" (dict "repo" $repo "rev" $rev "repos" $repos "layers" (list) "opts" $opts "createNamespace" true) | indent 4 }}
+
+{{- range list "tenants" "shared" }}
+{{- $scope := . }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: {{ $scope }}
+  namespace: {{ $argocdNs }}
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+{{ include "cc.protections" $ | indent 2 }}
+  generators:
+    - git:
+        repoURL: {{ $repo | quote }}
+        revision: {{ $rev | quote }}
+        files:
+          - path: "{{ $scope }}/*/*/*/config.yaml"
+  template:
+    metadata:
+      name: '{{ printf "{{ index .path.segments 1 }}-{{ index .path.segments 2 }}-{{ index .path.segments 3 }}" }}'
+      finalizers: []
+    spec:
+      project: {{ if eq $scope "tenants" }}'{{ "tenant-{{ index .path.segments 1 }}" }}'{{ else }}'{{ "shared-{{ index .path.segments 1 }}" }}'{{ end }}
+      destination:
+        server: {{ $server | quote }}
+        namespace: '{{ "{{ .namespace }}" }}'
+  # indent 4, not 2. The block scalar's base indentation is set by `spec:`
+  # above, which is four. cc.sourcePatch emits its keys at two, so `indent 2`
+  # landed them at four as well -- level with `spec:` rather than under it.
+  # After the block strips four, the patch reads: spec is null, and there are
+  # root-level sources and syncPolicy. As a merge patch that says DELETE spec,
+  # so every Application generated from it was rejected for having none.
+  #
+  # The three ApplicationSets carrying a patch produced nothing on a live
+  # cluster and the two without one worked, which is the only reason anyone
+  # looked. Nothing here rendered it wrong -- the YAML was valid the whole way.
+  templatePatch: |
+    spec:
+{{ include "cc.sourcePatch" (dict "repo" $repo "rev" $rev "repos" $repos "layers" (ternary $layers (list) (eq $scope "tenants")) "opts" $opts "createNamespace" false) | indent 4 }}
+{{- end }}
+
+{{- range list "tenants" "shared" }}
+{{- $scope := . }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: {{ $scope }}-envs
+  namespace: {{ $argocdNs }}
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+{{ include "cc.protections" $ | indent 2 }}
+  generators:
+    - git:
+        repoURL: {{ $repo | quote }}
+        revision: {{ $rev | quote }}
+        files:
+          - path: "{{ $scope }}/*/*/env.yaml"
+  template:
+    metadata:
+      # `-baseline` so it cannot collide with a workload Application, which is
+      # named <tenant>-<env>-<service>. A workload folder called `baseline`
+      # would collide anyway, so hack/validate.py refuses that folder name.
+      name: '{{ printf "{{ index .path.segments 1 }}-{{ index .path.segments 2 }}-baseline" }}'
+      finalizers: []
+    spec:
+      project: envs
+      destination:
+        server: {{ $server | quote }}
+        namespace: '{{ "{{ .namespace }}" }}'
+      # Two sources, both this repository: the chart by path, and the same repo
+      # again carrying `ref: values` so $values resolves. env.yaml is the
+      # generator file AND the values file, so what selects the environment and
+      # what configures it cannot drift apart.
+      sources:
+        - repoURL: {{ $repo | quote }}
+          targetRevision: {{ $rev | quote }}
+          path: charts/env-baseline
+          helm:
+            valueFiles:
+              - $values/{{ "{{ .path.path }}" }}/env.yaml
+            parameters:
+              # So the chart can name its own source honestly. env.yaml has no
+              # scope key and should not grow one: the folder already says.
+              - name: sourcePath
+                value: '{{ "{{ .path.path }}" }}'
+        - repoURL: {{ $repo | quote }}
+          targetRevision: {{ $rev | quote }}
+          ref: values
+      syncPolicy:
+        automated:
+          selfHeal: true
+          # NEVER. Pruning this Application deletes the Namespace, and deleting
+          # a namespace deletes everything in it -- every workload, every PVC,
+          # every Secret. `git revert` brings the namespace back empty.
+          prune: false
+        syncOptions:
+{{- range $opts }}
+          - {{ . }}
+{{- end }}
+{{- end }}

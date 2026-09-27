@@ -1,0 +1,16 @@
+# Everything the mirror must hold before the first sync.
+#
+# Derived from this tool's own values by pairing each repository with the tag
+# beside it, so the list cannot drift from the values it describes. Verify each
+# before turning component.yaml:sync.automated to true:
+#
+#   docker manifest inspect <image>
+#
+# A path that is right here and wrong in the registry is ImagePullBackOff on the
+# cluster, a long way from this file. hack/check-mirror.py asks the registry all
+# of these at once.
+images:
+  - mirror.internal/k8s/jetstack/cert-manager-controller:v1.18.2
+  - mirror.internal/k8s/jetstack/cert-manager-webhook:v1.18.2
+  - mirror.internal/k8s/jetstack/cert-manager-cainjector:v1.18.2
+  - mirror.internal/k8s/jetstack/cert-manager-startupapicheck:v1.18.2

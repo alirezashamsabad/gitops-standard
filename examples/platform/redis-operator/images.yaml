@@ -1,0 +1,9 @@
+# Everything the mirror must hold before the first sync.
+#
+# THE OPERATOR ONLY. The Redis SERVER image is pulled by the custom resources in
+# tenants/, so it is listed in the images.yaml beside them -- two files, because
+# two folders pull. A mirror holding the operator and not the server is the
+# commonest version of this mistake, and the symptom is a pod in
+# ImagePullBackOff behind an Application reporting Synced and Healthy.
+images:
+  - mirror.internal/k8s/redis/redis-operator:v0.26.0
