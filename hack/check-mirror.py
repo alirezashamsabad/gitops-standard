@@ -103,7 +103,11 @@ registries = cluster.get("allowedImageRegistries") or []
 if not registries:
     die("cluster.yaml declares no allowedImageRegistries, so there is no mirror "
         "to ask")
-HOST = registries[0]
+# An entry is a registry host, optionally followed by the project every mirrored
+# image lives under (`mirror.example/k8s`). The API is on the host alone; the
+# project is the first path segment of the image either way.
+MIRROR = registries[0].rstrip("/")
+HOST = MIRROR.split("/", 1)[0]
 AUTH = credential_for(HOST)
 
 images, charts = {}, {}
@@ -133,7 +137,7 @@ if not images and not charts:
 # --------------------------------------------------------------------------- #
 # Probe first. Nothing is printed about anything until both mirrors answer.
 # --------------------------------------------------------------------------- #
-print(f"mirror:  {HOST}   ({'with a credential' if AUTH else 'anonymously'})")
+print(f"mirror:  {MIRROR}   ({'with a credential' if AUTH else 'anonymously'})")
 _, st = fetch(f"http://{HOST}/v2/", AUTH, want_json=False)
 # 401 here is a healthy registry declining an anonymous ping -- it answered.
 if st.startswith("unreachable") and "HTTP 401" not in st:
@@ -221,8 +225,8 @@ def tags_of(project, repo):
 missing, blind = [], []
 print("IMAGES")
 for img in sorted(images):
-    if not img.startswith(HOST + "/"):
-        missing.append((img, f"is not on {HOST}, so it is not mirrored at all"))
+    if not img.startswith(MIRROR + "/"):
+        missing.append((img, f"is not on {MIRROR}, so it is not mirrored at all"))
         print(f"  MISS  {img}")
         continue
     path, _, tag = img[len(HOST) + 1:].rpartition(":")
