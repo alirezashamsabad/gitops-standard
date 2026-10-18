@@ -96,18 +96,18 @@ spec:
   description: Namespaces, quotas and network posture for every environment.
   sourceRepos:
     - {{ .Values.argocd.repoURL | quote }}
-  destinations:
-{{- range .Values.tenants }}
+  # An empty list, never null: with no tenant and no shared scope yet, a bare
+  # `destinations:` renders null and the API refuses the whole AppProject.
+{{- $envNs := list }}
+{{- range concat (.Values.tenants | default list) (.Values.sharedScopes | default list) }}
 {{- range $env, $ns := .environments }}
+{{- $envNs = append $envNs $ns }}
+{{- end }}
+{{- end }}
+  destinations:{{ if not $envNs }} []{{ end }}
+{{- range $envNs }}
     - server: {{ $server }}
-      namespace: {{ $ns }}
-{{- end }}
-{{- end }}
-{{- range .Values.sharedScopes }}
-{{- range $env, $ns := .environments }}
-    - server: {{ $server }}
-      namespace: {{ $ns }}
-{{- end }}
+      namespace: {{ . }}
 {{- end }}
   # Namespace and nothing else. Enumerated, never "*".
   clusterResourceWhitelist:
