@@ -209,6 +209,15 @@ spec:
       # two cannot drift.
       name: '{{ "{{ .path.basename }}" }}'
       finalizers: []
+      annotations:
+        argocd.argoproj.io/compare-options: ServerSideDiff=true
+      # Compared the way it is applied. Sync is server-side (defaultSyncOptions),
+      # and a client-side diff then reports every field the API server or a
+      # CRD schema defaults inside a list -- an ExternalSecret's remoteRef, a
+      # StatefulSet's volumeClaimTemplates -- as drift: OutOfSync forever on a
+      # resource that is exactly as declared, and selfHeal re-applying it.
+      annotations:
+        argocd.argoproj.io/compare-options: ServerSideDiff=true
     spec:
       project: platform
       destination:
@@ -250,6 +259,8 @@ spec:
     metadata:
       name: '{{ printf "{{ index .path.segments 1 }}-{{ index .path.segments 2 }}-{{ index .path.segments 3 }}" }}'
       finalizers: []
+      annotations:
+        argocd.argoproj.io/compare-options: ServerSideDiff=true
     spec:
       project: {{ if eq $scope "tenants" }}'{{ "tenant-{{ index .path.segments 1 }}" }}'{{ else }}'{{ "shared-{{ index .path.segments 1 }}" }}'{{ end }}
       destination:
@@ -295,6 +306,8 @@ spec:
       # would collide anyway, so hack/validate.py refuses that folder name.
       name: '{{ printf "{{ index .path.segments 1 }}-{{ index .path.segments 2 }}-baseline" }}'
       finalizers: []
+      annotations:
+        argocd.argoproj.io/compare-options: ServerSideDiff=true
     spec:
       project: envs
       destination:
