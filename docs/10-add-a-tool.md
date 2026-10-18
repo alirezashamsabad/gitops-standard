@@ -52,7 +52,26 @@ writing it is the difference between a decision and an oversight.
 
 **Start with `automated: false`.** The folder existing means the Application
 exists; this is what stops it syncing before `images.yaml` has been read back
-out of the mirror. Turning it true afterwards is a one-line commit.
+out of the mirror. Turning it true afterwards is a one-line commit — and one
+more step, because the commit alone changes nothing on a live cluster.
+
+The ApplicationSets ignore `/spec/syncPolicy` on the Applications they own
+(`ignoreApplicationDifferences`), so that an auto-sync switched off during an
+incident stays off. The same rule means a `sync` change in git reaches only an
+Application that does not exist yet. After the commit has been pushed, delete
+the Application once and let the ApplicationSet create it again:
+
+```bash
+kubectl -n argocd delete application <tool>
+```
+
+Generated Applications carry no finalizer and the ApplicationSet preserves
+resources on deletion, so nothing the Application deployed is touched. Confirm
+the new one carries the policy from git:
+
+```bash
+kubectl -n argocd get application <tool> -o jsonpath='{.spec.syncPolicy.automated}'
+```
 
 ### images.yaml
 
